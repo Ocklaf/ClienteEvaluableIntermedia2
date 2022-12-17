@@ -1,0 +1,15 @@
+{
+  "name": "eslint-template",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "eslint": "wrap () { eslint ./src/${1}; }; wrap",
+    "winlint": "eslint"
+
+  },
+  "dependencies": {
+    "eslint": "^8.23.1"
+  }
+}
