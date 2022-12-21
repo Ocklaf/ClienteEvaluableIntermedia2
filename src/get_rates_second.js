@@ -4,7 +4,7 @@ import fetch from 'node-fetch'
 const host = 'https://api.frankfurter.app'
 const wwwError = 'No se han podido obtener las divisas'
 
-function errorManage(errorMessage) {
+function errorsHandler(errorMessage) {
   let isStatusOrSystemError = typeof errorMessage === 'number' || errorMessage.type === 'system'
 
   if (isStatusOrSystemError) {
@@ -79,31 +79,28 @@ function datesAscendentOrder(endDate, weeks) {
   return dates
 }
 
-function outOfDate(startDate, fetchDate) {
-  let limit2days = obtainADate(new Date(startDate), -2)
-
+function outOfDate(date, fetchDate) {
+  let limit2days = obtainADate(new Date(date), -2)
   return new Date(fetchDate) < limit2days
 }
 
 function searchMin(json, date) {
-  // let nose = Object.entries(json.rates)
-  // console.log(nose)
   let min = Math.min(...Object.values(json.rates))
   let currency = Object.keys(json.rates).find(key => json.rates[key] === min)
 
   return { date, currency, min }
 }
 
-async function obtainMin(date, startDate, currency) {
+async function obtainMin(date, currency) {
   let urlMin = `${host}/${date}?from=${currency}`
   let result = fetch(urlMin)
     .then(response => {
-      if (response.status !== 200) throw (response.status)
+      if (response.status !== 200) throw response.status
 
       return response.json()
     })
     .then(json => {
-      if (date === startDate && outOfDate(startDate, json.date)) {
+      if (outOfDate(date, json.date)) {
         throw `No se ha podido obtener el cambio para la divisa ${currency} el día ${date}: El cambio no pertenece a la fecha solicitada`
       }
 
@@ -130,18 +127,21 @@ async function obtainExchange(json, date) {
   return resultado
 }
 
-async function parallelActions(dates, currency) {
-  let startDate = dates.at(-1)
+async function serialAndParallel(date, currency) {
+  let objMin = await obtainMin(date, currency)        
+  return obtainExchange(objMin, date)
+}
+
+async function allPromises(dates, currency) {
   let promises = []
 
   dates.forEach(date => {
     promises.push(
-      obtainMin(date, startDate, currency)
-        .then(minValueObj => obtainExchange(minValueObj, date))
+      serialAndParallel(date, currency)
     )
   })
 
-  return await Promise.all(promises)
+  return Promise.all(promises)
 }
 
 async function getMinRates(date, currency, weeks) {
@@ -152,14 +152,14 @@ async function getMinRates(date, currency, weeks) {
     if (correctCurrency) {
       if (weeks) {
         let dates = datesAscendentOrder(date, weeks)
-        result = await parallelActions(dates, correctCurrency)
+        result = await allPromises(dates, correctCurrency)
       }
     }
 
     return { currency: correctCurrency, rates: [...result] }
   } catch (error) {
 
-    return errorManage(error)
+    return errorsHandler(error)
   }
 }
 
