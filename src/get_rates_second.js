@@ -127,21 +127,21 @@ async function obtainExchange(json, date) {
   return resultado
 }
 
-async function serialAndParallel(date, currency) {
+async function serialData(date, currency) {
   let objMin = await obtainMin(date, currency)        
   return obtainExchange(objMin, date)
 }
 
 async function allPromises(dates, currency) {
-  let promises = []
+  let parallelData = []
 
   dates.forEach(date => {
-    promises.push(
-      serialAndParallel(date, currency)
+    parallelData.push(
+      serialData(date, currency)
     )
   })
 
-  return Promise.all(promises)
+  return Promise.all(parallelData)
 }
 
 async function getMinRates(date, currency, weeks) {
@@ -149,11 +149,10 @@ async function getMinRates(date, currency, weeks) {
 
   try {
     let correctCurrency = await obtainCurrency(currency)
-    if (correctCurrency) {
-      if (weeks) {
-        let dates = datesAscendentOrder(date, weeks)
-        result = await allPromises(dates, correctCurrency)
-      }
+
+    if (correctCurrency && weeks) {
+      let dates = datesAscendentOrder(date, weeks)
+      result = await allPromises(dates, correctCurrency)      
     }
 
     return { currency: correctCurrency, rates: [...result] }
