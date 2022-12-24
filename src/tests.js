@@ -1,5 +1,5 @@
 
-import { getMinRates } from "./get_rates_second.js"
+import { getMinRates } from "./get_rates.js"
 import util from 'util'
 
 

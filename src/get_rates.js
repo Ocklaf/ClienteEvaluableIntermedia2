@@ -2,157 +2,147 @@
 import fetch from 'node-fetch'
 
 const host = 'https://api.frankfurter.app'
+const wwwError = 'No se han podido obtener las divisas'
 
-function addDays(date, days) {
+function errorsHandler(errorMessage) {
+  let isStatusOrSystemError = typeof errorMessage === 'number' || errorMessage.type === 'system'
+
+  if (isStatusOrSystemError) return wwwError
+  
+  return errorMessage
+}
+
+function obtainADate(date, addOrSubstractDays) {
   const newDate = new Date(date)
-  newDate.setDate(newDate.getDate() + days)
+  newDate.setDate(newDate.getDate() + addOrSubstractDays)
+
   return newDate
 }
 
 function YYYYMMDD(date) {
+
   return date.toISOString().slice(0, 10)
 }
 
-function getAllDatesAsc(startDate, weeksBefore) {
+function prepareString(string) {
+
+  return string.trim().toLowerCase()
+}
+
+function searchCurrency(jsonCurrencies, stringForSearch) {
+  for (let currency in jsonCurrencies) {
+    let currencyName = prepareString(jsonCurrencies[currency])
+    if (currencyName.includes(stringForSearch)) return currency
+  }
+
+  throw `No se ha encontrado ninguna divisa con el nombre ${stringForSearch}`
+}
+
+async function fetchConcurrencies() {
+  let response = await fetch(`${host}/currencies`)
+
+  if (response.status !== 200) throw response.status
+
+  return await response.json()
+}
+
+async function obtainCurrency(currencyString) {
+  let jsonCurrencies = await fetchConcurrencies()
+  let stringForSearch = prepareString(currencyString)
+
+  return searchCurrency(jsonCurrencies, stringForSearch)
+}
+
+function calculateFirstDate(endDate, weeks) {
+  let totalDaysBefore = ((weeks - 1) * 7) * - 1
+  let date = obtainADate(endDate, totalDaysBefore)
+
+  return date
+}
+
+function datesAscendentOrder(endDate, weeks) {
   let dates = []
+  let firstDate = calculateFirstDate(endDate, weeks)
 
-  startDate = new Date(startDate)
-  startDate = new Date(startDate.setDate(startDate.getDate() - ((weeksBefore - 1) * 7))) /*quito una semana para poder fecha enviada, si quito todas me voy una semanta atrás*/
-
-  for (let weeksElapsed = 0; weeksElapsed < weeksBefore; weeksElapsed++) {
-    let date = addDays(startDate, weeksElapsed * 7)
-    dates.push(YYYYMMDD(new Date(date)))
+  for (let weeksElapsed = 0; weeksElapsed < weeks; weeksElapsed++) {
+    let date = obtainADate(firstDate, weeksElapsed * 7)
+    dates.push(YYYYMMDD(date))
   }
 
   return dates
 }
 
-function existsCurrency(currentCurreny, searchedCurrency) {
-  return currentCurreny.toLowerCase().includes(searchedCurrency.toLowerCase())
+function outOfDate(date, fetchDate) {
+  let limit2days = obtainADate(new Date(date), -2)
+
+  return new Date(fetchDate) < limit2days
 }
 
-async function obtainCurrency(currency) {
-  let allCurrencies
+function searchMin(json, date) {
+  let min = Math.min(...Object.values(json.rates))
+  let currency = Object.keys(json.rates).find(key => json.rates[key] === min)
 
-  try {
-    allCurrencies = await fetch(`${host}/currencies`)
-      .then(response => {
-        if (response.status !== 200) {
-          throw response.status
-        }
-        return response.json()
-      })
-  }
-  catch (error) {
-    if (typeof error === 'number') {
-      throw `Error: ${error}`
-    }
-    throw 'No se han podido obtener las divisas'
-  }
-
-  for (let current in allCurrencies) {
-    if (existsCurrency(allCurrencies[current], currency)) {
-      return current
-    }
-  }
-
-  throw `No se ha encontrado ninguna divisa con el nombre ${currency}`
+  return { date, currency, min }
 }
 
-function obtainMin(obj) {
-  let min = Object.values(obj.rates).sort((a, b) => a - b)[0]
-  let currency = Object.keys(obj.rates).find(key => obj.rates[key] === min)
-  //console.log({ date: obj.date, currency, min })
-  return { date: obj.date, currency, min }
+async function obtainMin(date, currency) {
+  let urlMin = `${host}/${date}?from=${currency}`
+  let response = await fetch(urlMin)
+
+  if (response.status !== 200) throw response.status
+
+  response = await response.json()
+
+  if (outOfDate(date, response.date)) throw `No se ha podido obtener el cambio para la divisa ${currency} el día ${date}: El cambio no pertenece a la fecha solicitada`
+
+  return searchMin(response, date)
 }
 
-function yesterday(date) {
-  const newDate = new Date(date)
-  newDate.setDate(newDate.getDate() - 1)
-  return YYYYMMDD(newDate)
+async function obtainExchange(json, date) {
+  let yesterdayDate = YYYYMMDD(obtainADate(date, -1))
+  let url = `${host}/${yesterdayDate}?from=${json.currency}&to=EUR`
+  let response = await fetch(url)
+
+  if (response.status !== 200) throw response.status
+  response = await response.json()
+
+  return { day: date, min: { currency: response.base, EUR: response.rates.EUR } }
 }
 
-function urlForEurExchange(miObj, date) {
-  let previousDay = yesterday(date)
-  return `${host}/${previousDay}?from=${miObj.currency}&to=EUR`
+async function serialData(date, currency) {
+  let objMin = await obtainMin(date, currency)
+  
+  return obtainExchange(objMin, date)
 }
 
-function getLimitDate(dateDemanded) {
-  return YYYYMMDD(addDays(new Date(dateDemanded), -2))
-}
+async function allPromises(dates, currency) {
+  let parallelData = []
 
-async function paralelActions(allDates, currency) {
-  let paralelPromises = []
-  let dateLimit = getLimitDate(allDates.at(-1))
+  dates.forEach(date => {
+    parallelData.push(
+      serialData(date, currency)
+    )
+  })
 
-  allDates.forEach(async date => {
-      let urlMin = `${host}/${date}?from=${currency}`
-      paralelPromises.push(
-        fetch(urlMin)      
-          .then(res => {
-            if (res.status !== 200) {
-              throw res.status
-            }
-            return res.json()
-          })
-          .then(json => {
-            if (new Date(json.date) < new Date(dateLimit) && new Date(date).getTime() === new Date(allDates.at(-1)).getTime()) {
-              throw `No se ha podido obtener el cambio para la divisa ${currency} el día ${allDates.at(-1)}: El cambio no pertenece a la fecha solicitada`
-            }
-            return obtainMin(json)
-          })
-          .then(obj => urlForEurExchange(obj, date))
-          .then(url => fetch(url))     
-          .then(res => {
-            if (res.status !== 200) {
-              throw res.status
-            }
-            return res.json()
-          })
-          .then(response => {
-            return { day: date, min: { currency: response.base, EUR: response.rates.EUR } }
-          })
-      )
-
-    })
-
-  const result = await Promise.all(paralelPromises)
-
-  return result
+  return Promise.all(parallelData)
 }
 
 async function getMinRates(date, currency, weeks) {
-  let currencyToUse
   let result = []
+
   try {
-    currencyToUse = await obtainCurrency(currency)
-    if (weeks) {
-      let allDates = getAllDatesAsc(date, weeks)
-      result = await paralelActions(allDates, currencyToUse)
-      console.log(result)
+    let correctCurrency = await obtainCurrency(currency)
+
+    if (correctCurrency && weeks) {
+      let dates = datesAscendentOrder(date, weeks)
+      result = await allPromises(dates, correctCurrency)
     }
-    return await { currency: currencyToUse, rates: [...result] }
+
+    return { currency: correctCurrency, rates: [...result] }
   } catch (error) {
-    return error
+
+    return errorsHandler(error)
   }
-
 }
-
-let respuesta
-
-// respuesta = await getMinRates('2022-12-04', 'Dollar', 5)
-// console.log(respuesta)
-
-// respuesta = await getMinRates('2022-05-13', 'Dollar', 0)
-// console.log(respuesta)
-
-// respuesta = await getMinRates('2022-05-13', 'banana', 5)
-// console.log(respuesta)
-
-respuesta = await getMinRates('2023-12-12', 'Dollar', 5)
-console.log(respuesta)
-
-// respuesta = await getMinRates('2022-12-04', 'pou', 5)
-// console.log(JSON.stringify(respuesta, null, 4))
 
 export { getMinRates }
