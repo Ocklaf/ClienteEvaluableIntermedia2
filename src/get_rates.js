@@ -41,8 +41,8 @@ function searchCurrency(jsonCurrencies, stringForSearch) {
 }
 
 function calculateFirstDate(endDate, weeks) {
-  let totalDaysBefore = ((weeks - 1) * 7) * - 1
-  let date = obtainADate(endDate, totalDaysBefore)
+  let daysToSubstract = ((weeks - 1) * 7) * - 1
+  let date = obtainADate(endDate, daysToSubstract)
 
   return date
 }
