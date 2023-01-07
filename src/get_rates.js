@@ -3,17 +3,20 @@ import fetch from 'node-fetch'
 
 const host = 'https://api.frankfurter.app'
 const urlConcurrencies = `${host}/currencies`
+const daysInAWeek = 7
+const convertToNegative = - 1
+const maxDaysPermitted = -2
 const wwwError = 'No se han podido obtener las divisas'
 
 function errorsHandler(errorMessage) {
-  let isStatusOrSystemError = typeof errorMessage === 'number' || errorMessage.type === 'system'
+  let isStatusOrNoInternetError = typeof errorMessage === 'number' || errorMessage.type === 'system'
 
-  if (isStatusOrSystemError) return wwwError
+  if (isStatusOrNoInternetError) throw wwwError
 
-  return errorMessage
+  throw errorMessage
 }
 
-function obtainADate(date, addOrSubstractDays) {
+function createNewDate(date, addOrSubstractDays) {
   const newDate = new Date(date)
   newDate.setDate(newDate.getDate() + addOrSubstractDays)
 
@@ -41,38 +44,38 @@ function searchCurrency(jsonCurrencies, stringForSearch) {
 }
 
 function calculateFirstDate(endDate, weeks) {
-  let daysToSubstract = ((weeks - 1) * 7) * - 1
-  let date = obtainADate(endDate, daysToSubstract)
+  let totalWeeksBefore = weeks - 1
+  let totalDaysToSubstract = totalWeeksBefore * daysInAWeek * convertToNegative
+  let date = createNewDate(endDate, totalDaysToSubstract)
 
   return date
 }
 
 function datesAscendentOrder(endDate, weeks) {
   let dates = []
-  let daysInAWeek = 7
   let firstDate = calculateFirstDate(endDate, weeks)
 
   for (let weeksElapsed = 0; weeksElapsed < weeks; weeksElapsed++) {
-    let date = obtainADate(firstDate, weeksElapsed * daysInAWeek)
+    let date = createNewDate(firstDate, weeksElapsed * daysInAWeek)
     dates.push(YYYYMMDD(date))
   }
 
   return dates
 }
 
-function throwIfIsOutOfDate(date, fetchDate, currency) {
-  let limit2days = obtainADate(new Date(date), -2)
-  let isMoreThan2Days = new Date(fetchDate) < limit2days
+function throwIfIsOutOfDate(date, fetchedDate, currency) {
+  let date2DaysBefore = createNewDate(new Date(date), maxDaysPermitted)
+  let isMoreThan2Days = new Date(fetchedDate) < date2DaysBefore
 
   if (isMoreThan2Days)
     throw `No se ha podido obtener el cambio para la divisa ${currency} el día ${date}: El cambio no pertenece a la fecha solicitada`
 }
 
-function searchMin(json, date) {
-  let min = Math.min(...Object.values(json.rates))
-  let currency = Object.keys(json.rates).find(key => json.rates[key] === min)
+function searchMinCurrency(json) {
+  let minExchange = Math.min(...Object.values(json.rates))
+  let currency = Object.keys(json.rates).find(key => json.rates[key] === minExchange)
 
-  return { date, currency, min }
+  return currency
 }
 
 function createUrl(date, currency) {
@@ -99,34 +102,27 @@ async function obtainCurrency(currencyString) {
   return searchCurrency(response, stringForSearch)
 }
 
-async function serialData(date, currency) {
-  let url = createUrl(date, currency)
-  let response = await fetchResponse(url, date, currency)
-  let objMin = searchMin(response, date)
+async function createMinRateObject(date, currency) {
+  let urlForMinimumExchange = createUrl(date, currency)
+  let objMinExchange = await fetchResponse(urlForMinimumExchange, date, currency)
+  let currencyOtained = searchMinCurrency(objMinExchange)
 
-  let yesterday = YYYYMMDD(obtainADate(date, -1))
-  url = createUrl(yesterday, objMin.currency) + '&to=EUR'
-  response = await fetchResponse(url, yesterday, currency)
-  
-  return { day: date, min: { currency: response.base, EUR: response.rates.EUR } }
+  let yesterday = YYYYMMDD(createNewDate(date, -1))
+  let urlForEurExchange = createUrl(yesterday, currencyOtained) + '&to=EUR'
+  let objEurExchange = await fetchResponse(urlForEurExchange, yesterday, currency)
+
+  return { day: date, min: { currency: objMinExchange.base, EUR: objEurExchange.rates.EUR } }
 }
 
 async function allPromises(dates, currency) {
-  let parallelData = []
 
-  dates.forEach(date => {
-    parallelData.push(
-      serialData(date, currency)
-    )
-  })
-
-  return Promise.all(parallelData)
+  return Promise.all(dates.map(date => createMinRateObject(date, currency)))
 }
 
 async function getMinRates(date, currency, weeks) {
-  let result = []
-
+  
   try {
+    let result = []
     let correctCurrency = await obtainCurrency(currency)
 
     if (correctCurrency && weeks) {
@@ -137,7 +133,7 @@ async function getMinRates(date, currency, weeks) {
     return { currency: correctCurrency, rates: [...result] }
   } catch (error) {
 
-    return errorsHandler(error)
+    errorsHandler(error)
   }
 }
 
